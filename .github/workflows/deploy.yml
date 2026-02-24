@@ -1,0 +1,66 @@
+name: Deploy Monitorly
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Deploy to Server via SSH
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: 22
+        envs: GITHUB_TOKEN
+        script: |
+          set -e
+
+          # 1. Define PHP & Composer Paths (cPanel)
+          PHP_BIN="/opt/cpanel/ea-php84/root/usr/bin/php"
+          COMPOSER_BIN="/usr/local/bin/composer"
+          
+          # 2. Go to Project Directory
+          PROJECT_PATH="monitorly.sha3booony.dev"
+          cd "$HOME/$PROJECT_PATH"
+
+          echo "=========================================="
+          echo "  Deploying Monitorly..."
+          echo "  Working in: $(pwd)"
+          echo "=========================================="
+
+          # 3. Configure Git to use the Token (HTTPS Auth)
+          git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/Sha3booony/monyterly.git
+
+          # 4. Pull Latest Code
+          echo ">> Pulling latest code..."
+          git fetch origin main
+          git reset --hard origin/main
+
+          # 5. Install Dependencies
+          echo ">> Installing Composer dependencies..."
+          $PHP_BIN $COMPOSER_BIN install --no-interaction --prefer-dist --optimize-autoloader --no-dev
+
+          # 6. Laravel Optimization
+          echo ">> Running migrations..."
+          $PHP_BIN artisan migrate --force
+
+          echo ">> Caching configuration..."
+          $PHP_BIN artisan config:cache
+          $PHP_BIN artisan route:cache
+          $PHP_BIN artisan view:cache
+
+          echo ">> Clearing old caches..."
+          $PHP_BIN artisan optimize:clear
+
+          echo "=========================================="
+          echo "  ✅ Deployment Finished Successfully!"
+          echo "=========================================="
