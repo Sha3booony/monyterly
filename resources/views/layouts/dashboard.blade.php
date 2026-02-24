@@ -409,6 +409,13 @@
                     <span class="icon">🎫</span> {{ __('messages.issues') }}
                 </a>
             </li>
+            @if(auth()->user()->is_admin)
+            <li style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+                <a href="{{ route('admin.dashboard') }}" class="sidebar-link" style="color:#ff6b2b;">
+                    <span class="icon">⚡</span> Admin Panel
+                </a>
+            </li>
+            @endif
         </ul>
 
         <div class="sidebar-footer">
