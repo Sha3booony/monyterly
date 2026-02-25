@@ -24,8 +24,13 @@ class RunMonitorChecks extends Command
         $this->info("Checking {$monitors->count()} monitors...");
 
         foreach ($monitors as $monitor) {
-            CheckMonitorJob::dispatch($monitor);
-            $this->line("→ Dispatched check for: {$monitor->name} ({$monitor->url})");
+            try {
+                // Run synchronously - no queue dependency
+                CheckMonitorJob::dispatchSync($monitor);
+                $this->line("✅ Checked: {$monitor->name} ({$monitor->url}) → {$monitor->fresh()->status}");
+            } catch (\Exception $e) {
+                $this->error("❌ Failed: {$monitor->name} — {$e->getMessage()}");
+            }
         }
 
         $this->info('Done!');
