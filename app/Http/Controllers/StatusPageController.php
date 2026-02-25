@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Monitor;
 use App\Models\User;
+use App\Jobs\CheckMonitorJob;
 use Illuminate\Http\Request;
 
 class StatusPageController extends Controller
@@ -14,6 +15,14 @@ class StatusPageController extends Controller
     public function show($userId)
     {
         $user = User::findOrFail($userId);
+        $monitors = $user->monitors()
+            ->where('is_active', true)
+            ->get();
+
+        // Auto-check overdue monitors (scheduler fallback)
+        $this->checkOverdueMonitors($monitors);
+
+        // Refresh after checks
         $monitors = $user->monitors()
             ->where('is_active', true)
             ->select('id', 'name', 'url', 'status', 'uptime_percentage', 'response_time', 'last_checked_at')
@@ -34,6 +43,14 @@ class StatusPageController extends Controller
         $user = User::findOrFail($userId);
         $monitors = $user->monitors()
             ->where('is_active', true)
+            ->get();
+
+        // Auto-check overdue monitors
+        $this->checkOverdueMonitors($monitors);
+
+        // Refresh after checks
+        $monitors = $user->monitors()
+            ->where('is_active', true)
             ->select('id', 'name', 'url', 'status', 'uptime_percentage', 'response_time', 'last_checked_at')
             ->get();
 
@@ -43,5 +60,36 @@ class StatusPageController extends Controller
             'monitors' => $monitors,
             'last_updated' => now()->toISOString(),
         ]);
+    }
+
+    /**
+     * Check any monitors that are overdue or still pending
+     */
+    private function checkOverdueMonitors($monitors): void
+    {
+        foreach ($monitors as $monitor) {
+            $shouldCheck = false;
+
+            // Always check if status is 'pending' (legacy/stuck)
+            if ($monitor->status === 'pending') {
+                $shouldCheck = true;
+            }
+            // Check if never checked
+            elseif (!$monitor->last_checked_at) {
+                $shouldCheck = true;
+            }
+            // Check if overdue (past interval + 1 min buffer)
+            elseif ($monitor->last_checked_at->addMinutes($monitor->interval + 1)->isPast()) {
+                $shouldCheck = true;
+            }
+
+            if ($shouldCheck) {
+                try {
+                    CheckMonitorJob::dispatchSync($monitor);
+                } catch (\Exception $e) {
+                    $monitor->update(['status' => 'down']);
+                }
+            }
+        }
     }
 }

@@ -61,9 +61,20 @@ class Monitor extends Model
         return match($this->status) {
             'up' => '#00ff88',
             'down' => '#ff3366',
-            'pending' => '#ffaa00',
             'paused' => '#666',
-            default => '#666',
+            default => '#666', // pending or any unknown status
         };
+    }
+
+    /**
+     * Check if this monitor is overdue for a check
+     */
+    public function isOverdue(): bool
+    {
+        if (!$this->last_checked_at) {
+            return true;
+        }
+
+        return $this->last_checked_at->addMinutes($this->interval + 1)->isPast();
     }
 }

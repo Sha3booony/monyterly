@@ -16,6 +16,7 @@ class RunMonitorChecks extends Command
         $monitors = Monitor::where('is_active', true)
             ->where(function ($query) {
                 $query->whereNull('last_checked_at')
+                    ->orWhere('status', 'pending') // Always re-check pending monitors
                     ->orWhereRaw('TIMESTAMPDIFF(MINUTE, last_checked_at, NOW()) >= `interval`');
             })
             ->get();

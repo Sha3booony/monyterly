@@ -36,12 +36,17 @@ class MonitorController extends Controller
             'url' => $validated['url'],
             'interval' => $validated['interval'],
             'notify_email' => $request->boolean('notify_email', true),
-            'status' => 'pending',
+            'status' => 'up', // Will be updated by the immediate check below
             'is_active' => true,
         ]);
 
-        // Immediate first check — no waiting for scheduler
-        CheckMonitorJob::dispatchSync($monitor);
+        // Immediate first check — run synchronously so user sees real status
+        try {
+            CheckMonitorJob::dispatchSync($monitor);
+        } catch (\Exception $e) {
+            // If check fails, mark as down
+            $monitor->update(['status' => 'down']);
+        }
         $monitor->refresh();
 
         return redirect()->route('monitors.show', $monitor)
@@ -51,6 +56,17 @@ class MonitorController extends Controller
     public function show(Monitor $monitor)
     {
         $this->authorize($monitor);
+
+        // Auto-check if monitor is overdue (scheduler fallback)
+        if ($monitor->is_active && $this->isOverdue($monitor)) {
+            try {
+                CheckMonitorJob::dispatchSync($monitor);
+                $monitor->refresh();
+            } catch (\Exception $e) {
+                // Silent fail - don't break the page
+            }
+        }
+
         $monitor->load('logs', 'issues');
 
         $logs = $monitor->logs()->latest()->take(50)->get();
@@ -119,10 +135,22 @@ class MonitorController extends Controller
     public function togglePause(Monitor $monitor)
     {
         $this->authorize($monitor);
+        
+        $wasActive = $monitor->is_active;
         $monitor->update([
-            'is_active' => !$monitor->is_active,
-            'status' => !$monitor->is_active ? 'pending' : 'paused',
+            'is_active' => !$wasActive,
+            'status' => !$wasActive ? $monitor->status : 'paused', // Keep previous status when resuming
         ]);
+
+        // If resuming, do an immediate check
+        if (!$wasActive) {
+            try {
+                CheckMonitorJob::dispatchSync($monitor);
+                $monitor->refresh();
+            } catch (\Exception $e) {
+                $monitor->update(['status' => 'down']);
+            }
+        }
 
         return back()->with('success',
             $monitor->is_active ? __('messages.monitor_resumed') : __('messages.monitor_paused')
@@ -158,6 +186,19 @@ class MonitorController extends Controller
             'Content-Type' => 'text/csv',
             'Content-Disposition' => "attachment; filename=\"{$monitor->name}-issues.csv\"",
         ]);
+    }
+
+    /**
+     * Check if a monitor is overdue for a check (past its interval)
+     */
+    private function isOverdue(Monitor $monitor): bool
+    {
+        if (!$monitor->last_checked_at) {
+            return true; // Never checked
+        }
+        
+        // Add 1 minute buffer to avoid checking too eagerly
+        return $monitor->last_checked_at->addMinutes($monitor->interval + 1)->isPast();
     }
 
     private function authorize(Monitor $monitor)
